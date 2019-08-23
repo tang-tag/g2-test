@@ -1,0 +1,238 @@
+
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,height=device-height">
+  <title>中国地图-省市下钻</title>
+  <style>
+    ::-webkit-scrollbar {
+      display: none;
+    }
+
+    html,
+    body {
+      overflow: hidden;
+      height: 100%;
+      margin: 0;
+    }
+
+    #mountNode {
+      height: 100%;
+    }
+  </style>
+</head>
+
+<body>
+  <div>
+    <button id="backBtn">返回上一级</button>
+  </div>
+  <div id="mountNode"></div>
+  <script>/*Fixing iframe window.innerHeight 0 issue in Safari*/document.body.clientHeight;</script>
+  <script src="https://gw.alipayobjects.com/os/antv/pkg/_antv.g2-3.5.1/dist/g2.min.js"></script>
+  <script src="https://gw.alipayobjects.com/os/antv/pkg/_antv.data-set-0.10.1/dist/data-set.min.js"></script>
+  <script src="https://gw.alipayobjects.com/os/antv/assets/lib/jquery-3.2.1.min.js"></script>
+  <script src="https://gw.alipayobjects.com/os/antv/assets/lib/lodash-4.17.4.min.js"></script>
+  <script src="https://webapi.amap.com/maps?v=1.4.1&key=0d78256ea89beeb8c25d1cd047549d1f"></script>
+  <script src="https://webapi.amap.com/ui/1.0/main.js?v=1.0.11"></script>
+  <script>
+    const loadAreaNode = (function() {
+      let isLoad,
+          districtExplorer, 
+          promiseWaits = []
+
+      function callRunWaits() {
+        while( promiseWaits.length ) {
+          let args = promiseWaits.shift()
+
+          districtExplorer.loadAreaNode(args[0], (error, areaNode)=> {
+            if( error ) {
+              args[2](error)
+            }else {
+              args[1](areaNode)
+            }
+          })
+        }
+      }
+
+      return function( code ) {
+        let _resolve, _reject
+          promise = new Promise((resolve, reject) => {
+            _resolve = resolve
+            _reject = reject
+          })
+        
+        // 加入执行队列
+        promiseWaits.push([code, _resolve, _reject])
+
+        // 若已加载好库，就直接执行
+        // 否则等等加载完成，再执行所有执行队列
+        if( districtExplorer ) {
+          callRunWaits()
+        }else if( !isLoad ) {
+          isLoad = true
+          AMapUI.load(['ui/geo/DistrictExplorer', 'lib/$'], function(DistrictExplorer) {
+            let map = new AMap.Map('china', { zoom: 4 })
+
+            isLoad = null
+            districtExplorer = new DistrictExplorer({ map })
+
+            callRunWaits()
+          })
+        }
+
+        return promise
+      }
+    }())
+
+    const CustomG2Map = (function() {
+      function CustomG2Map(option) {
+        this.openStack = []
+        this.areaChart = null
+        this.geoJSON = []
+
+        this.option = option
+      }
+
+      CustomG2Map.prototype = {
+        render(areaNode) {
+          var adcode = areaNode.getAdcode();
+          var geoJSON = areaNode.getSubFeatures(); // 获取 geoJSON 数据
+          // var name = areaNode.getName();
+
+          // 记录当前打开area, 用以回退
+          this.openStack.push(areaNode)
+          this.geoJSON = geoJSON
+
+          this.areaChart && this.areaChart.destroy();
+          this.areaChart = null;
+
+          const dv = this.option.processData
+            ? this.option.processData(geoJSON)
+            : geoJSON
+
+            // start: 计算地图的最佳宽高
+          var longitudeRange = dv.range('longitude')
+          var lantitudeRange = dv.range('latitude')
+          var ratio = (longitudeRange[1] - longitudeRange[0]) / (lantitudeRange[1] - lantitudeRange[0]);
+
+          // 按照9:6比例显示地图
+          const height = $('#mountNode').width() / (9 / 6)
+
+          // end: 计算地图的最佳宽高
+          let areaChart = new G2.Chart({
+            container: 'mountNode',
+            // width: width,
+            height: height,
+            forceFit: true,
+            padding: 0,
+          })
+          areaChart.source(dv)
+          areaChart.axis(false)
+          areaChart.tooltip({
+            showTitle: false
+          });
+          areaChart.polygon().position('longitude*latitude').label('name', {
+            textStyle: {
+              fill: '#fff',
+              fontSize: 10,
+              shadowBlur: 2,
+              shadowColor: 'rgba(0, 0, 0, .45)'
+            }
+          }).style({
+            stroke: '#fff',
+            lineWidth: 1
+          }).color('value', '#BAE7FF-#1890FF-#0050B3')
+
+
+          areaChart.render()
+          this.areaChart = areaChart
+
+          this.option.addEventListener 
+            && this.option.addEventListener(this)
+        },
+
+        backRender() {
+          const { openStack } = this
+
+          // 删除当前页
+          openStack.pop()
+
+          // 删除当前页后，获取最后一项，也就是上一页
+          const area = openStack[openStack.length - 1]
+
+          if (area) {
+            this.render(area)
+          }
+        },
+      }
+
+      return CustomG2Map
+    }())
+    
+    function switchAreaNode(adcod) {
+      loadAreaNode(adcod)
+        .then((areaNode) => {
+          customG2Map.render(areaNode)
+        })
+    }
+
+    function processData(geoJSON) {
+      var mapData = {
+        type: 'FeatureCollection',
+        features: geoJSON
+      }
+
+      // 构造虚拟数据
+      let userData = geoJSON.map( ({ properties: { name, adcode } })=> ({
+        name, 
+        adcode,
+        value: Math.round(Math.random() * 1000),
+      }))
+
+      var ds = new DataSet();
+      var geoDataView = ds.createView().source(mapData, {
+        type: 'GeoJSON'
+      }) // geoJSON 经纬度数据
+
+      // 用户数据
+      var dvData = ds.createView().source(userData);
+      dvData.transform({
+        type: 'geo.region',
+        field: 'name',
+        geoDataView: geoDataView,
+        as: ['longitude', 'latitude']
+      })
+
+      return dvData
+    }
+
+    let customG2Map = new CustomG2Map({
+      processData,
+      addEventListener(instance) {
+        instance.areaChart.on('polygon:click', (evt) => {
+          const data = evt.data._origin
+          _target = instance.geoJSON.find(({ properties: { adcode } }) => adcode == data.adcode)
+
+          console.log('---polygon-click: ', data, _target)
+
+          // 不打开县级
+          if (_target && _target.properties.level !== 'district') {
+            switchAreaNode(data.adcode)
+          }
+        })
+
+        // 回退功能
+        $('#backBtn').off('click').on('click', () => {
+          instance.backRender()
+        })
+      },
+    })
+ 
+    // 默认打开四川省
+    switchAreaNode(510000)
+ </script>
+</body>
+
+</html>

@@ -17,5 +17,20 @@ export default new Router({
       name: 'transform',
       component: () => import('@/views/Transform'),
     },
+    {
+      path: '/pie',
+      name: 'pie',
+      component: () => import('@/views/Pie'),
+    },
+    {
+      path: '/interval',
+      name: 'interval',
+      component: () => import('@/views/Interval'),
+    },
+    {
+      path: '/bar',
+      name: 'bar',
+      component: () => import('@/views/Bar'),
+    },
   ],
 });
